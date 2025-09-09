@@ -1,0 +1,23 @@
+# Carpetas de Visual Studio
+.vs/
+*.vsidx
+
+# Binarios y compilación
+bin/
+obj/
+Debug/
+Release/
+
+# Archivos de usuario
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Archivos temporales
+*.tmp
+*.log
+
+# Archivos de backup
+*.bak
+*.swp
