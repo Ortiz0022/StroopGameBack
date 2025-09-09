@@ -12,11 +12,36 @@ namespace StroobGame.Controllers
 
         public record RegisterDto(string Username);
 
+        // REGISTER ESTRICTO: crea y falla si existe
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
         {
-            var u = await _users.RegisterAsync(dto.Username);
-            return Ok(new { u.Id, u.Username });
+            try
+            {
+                var u = await _users.RegisterAsync(dto.Username);
+                return Ok(new { u.Id, u.Username, u.CreatedAt });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(new { message = ex.Message }); // 409
+            }
+        }
+
+        // LOOKUP: devuelve usuario existente por username (404 si no existe)
+        [HttpGet("by-username/{username}")]
+        public async Task<IActionResult> GetByUsername([FromRoute] string username)
+        {
+            var u = await _users.GetByUsernameAsync(username);
+            if (u is null) return NotFound("Usuario no encontrado");
+            return Ok(new { u.Id, u.Username, u.CreatedAt });
+        }
+
+        // OPCIONAL (si quieres simplicidad en pruebas): upsert idempotente
+        [HttpPost("resolve")]
+        public async Task<IActionResult> Resolve([FromBody] RegisterDto dto)
+        {
+            var u = await _users.ResolveAsync(dto.Username);
+            return Ok(new { u.Id, u.Username, u.CreatedAt });
         }
 
         [HttpGet("{id:guid}")]
