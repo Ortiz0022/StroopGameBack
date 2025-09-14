@@ -23,13 +23,17 @@ namespace StroobGame.Services
             var u = new User { Username = normalized };
             _db.Users.Add(u);
             await _db.SaveChangesAsync();
+
+            // 👉 Crear estadísticas iniciales para el usuario
+            _db.UserStats.Add(new UserStats { UserId = u.Id });
+            await _db.SaveChangesAsync();
+
             return u;
         }
 
         public Task<User?> GetByIdAsync(Guid userId) =>
-            _db.Users.FirstOrDefaultAsync(u => u.Id == userId)!;
+                    _db.Users.FirstOrDefaultAsync(u => u.Id == userId)!;
 
-        // NUEVO: lookup
         public Task<User?> GetByUsernameAsync(string username)
         {
             var normalized = (username ?? "").Trim();
@@ -49,6 +53,11 @@ namespace StroobGame.Services
             var u = new User { Username = normalized };
             _db.Users.Add(u);
             await _db.SaveChangesAsync();
+
+            // 👉 Crear estadísticas iniciales para el usuario
+            _db.UserStats.Add(new UserStats { UserId = u.Id });
+            await _db.SaveChangesAsync();
+
             return u;
         }
     }

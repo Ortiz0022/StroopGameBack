@@ -1,5 +1,8 @@
 ﻿using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using StroobGame.AppDataBase;
 using StroobGame.Services;
+using System.Xml.Linq;
 
 namespace StroobGame.Hubs
 {
@@ -7,13 +10,17 @@ namespace StroobGame.Hubs
     {
         private readonly IRoomService _rooms;
         private readonly IChatService _chat;
+        private readonly IGameService _game;
         private readonly ConnectionRegistry _connections;
+        private readonly AppDbContext _db;
 
-        public GameHub(IRoomService rooms, IChatService chat, ConnectionRegistry connections)
+        public GameHub(IRoomService rooms, IChatService chat, IGameService game, ConnectionRegistry connections, AppDbContext db)
         {
             _rooms = rooms;
             _chat = chat;
+            _game = game;
             _connections = connections;
+            _db = db;
         }
 
         /// <summary>
@@ -129,5 +136,194 @@ namespace StroobGame.Hubs
 
             await base.OnDisconnectedAsync(exception);
         }
+
+        private async Task BroadcastTurnChanged(string roomCode)
+        {
+            var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
+            var (uid, uname) = await _game.GetCurrentPlayerAsync(room.Id);
+
+            // TurnChanged: el front deshabilita inputs si no es su userId
+            await Clients.Group(roomCode).SendAsync("TurnChanged", new
+            {
+                UserId = uid,
+                Username = uname
+            });
+        }
+
+        // 🚀 StartGame por turnos
+        public async Task StartGame(string roomCode, int roundsPerPlayer)
+        {
+            var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
+            var players = await _rooms.GetPlayersAsync(room.Id);
+            if (players.Count < room.MinPlayers || players.Count > room.MaxPlayers)
+                throw new HubException($"El juego requiere entre {room.MinPlayers} y {room.MaxPlayers} jugadores.");
+
+            await _rooms.MarkStartedAsync(room.Id);
+
+            var gs = await _game.StartAsync(room.Id, roundsPerPlayer);
+
+            // Notificar inicio
+            await Clients.Group(roomCode).SendAsync("GameStarted", new
+            {
+                GameId = gs.Id,
+                RoomId = room.Id,
+                RoundsPerPlayer = gs.RoundsPerPlayer
+            });
+
+            // Scoreboard inicial
+            await BroadcastScoreboard(roomCode);
+
+            // Anuncia de quién es el turno
+            await BroadcastTurnChanged(roomCode);
+
+            // Primer round del jugador actual
+            var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
+            await Clients.Group(roomCode).SendAsync("NewRound", new
+            {
+                RoundId = created.round.Id,
+                created.round.Word,
+                created.round.InkHex,
+                Options = created.round.Options.OrderBy(o => o.Order).Select(o => new
+                {
+                    o.Id,
+                    o.IsCorrect,
+                    o.Order,
+                    o.ColorId
+                }),
+                RemainingForThisPlayer = created.remainingForThisPlayer
+            });
+        }
+
+        // 🖱️ Responder en modo por turnos
+        public async Task SubmitAnswer(string roomCode, Guid userId, int roundId, int optionId, double responseTimeSec)
+        {
+            var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
+
+            var (gp, delta, finishedTurn, finishedGame) =
+                await _game.SubmitAnswerTurnAsync(room.Id, userId, roundId, optionId, responseTimeSec);
+
+            // update individual + scoreboard en vivo
+            await Clients.Group(roomCode).SendAsync("ScoreUpdated", new
+            {
+                UserId = userId,
+                Score = gp.Score,
+                Delta = delta,
+                IsCorrect = delta > 0
+            });
+
+            await BroadcastScoreboard(roomCode);
+
+            if (finishedGame)
+            {
+                var winner = await _game.GetWinnerAsync(room.Id);
+                if (winner is not null)
+                {
+                    await Clients.Group(roomCode).SendAsync("Winner", new
+                    {
+                        winner.Value.UserId,
+                        winner.Value.Username,
+                        winner.Value.Score,
+                        AvgResponseMs = Math.Round(winner.Value.AvgMs)
+                    });
+                }
+
+                var board = await _game.GetScoreboardAsync(room.Id);
+                await Clients.Group(roomCode).SendAsync("GameFinished",
+                    board.Select(r => new
+                    {
+                        r.UserId,
+                        r.Username,
+                        r.Score,
+                        AvgResponseMs = Math.Round(r.AvgMs)
+                    }));
+                return;
+            }
+
+            if (finishedTurn)
+            {
+                // Cambió de jugador
+                await BroadcastTurnChanged(roomCode);
+
+                // Crea primer round del nuevo jugador
+                var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
+                await Clients.Group(roomCode).SendAsync("NewRound", new
+                {
+                    RoundId = created.round.Id,
+                    created.round.Word,
+                    created.round.InkHex,
+                    Options = created.round.Options.OrderBy(o => o.Order).Select(o => new
+                    {
+                        o.Id,
+                        o.IsCorrect,
+                        o.Order,
+                        o.ColorId
+                    }),
+                    RemainingForThisPlayer = created.remainingForThisPlayer
+                });
+            }
+            else
+            {
+                // Sigue el mismo jugador: crea siguiente round
+                var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
+                await Clients.Group(roomCode).SendAsync("NewRound", new
+                {
+                    RoundId = created.round.Id,
+                    created.round.Word,
+                    created.round.InkHex,
+                    Options = created.round.Options.OrderBy(o => o.Order).Select(o => new
+                    {
+                        o.Id,
+                        o.IsCorrect,
+                        o.Order,
+                        o.ColorId
+                    }),
+                    RemainingForThisPlayer = created.remainingForThisPlayer
+                });
+            }
+        }
+
+        // 🔁 Tu método BroadcastScoreboard ya existente (no cambia)
+        private async Task BroadcastScoreboard(string roomCode)
+        {
+            var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
+            var gs = await _db.GameSessions.FirstAsync(g => g.RoomId == room.Id);
+
+            // Score + promedio (como ya hacías)
+            var board = await _game.GetScoreboardAsync(room.Id);
+
+            // NUEVO: contar aciertos/errores por usuario en la partida actual
+            var totals = await _db.Answers
+                .Where(a => a.GameSessionId == gs.Id)
+                .GroupBy(a => a.UserId)
+                .Select(g => new
+                {
+                    UserId = g.Key,
+                    Correct = g.Count(x => x.IsCorrect),
+                    Wrong = g.Count(x => !x.IsCorrect)
+                })
+                .ToListAsync();
+
+            // Mezcla score + contadores
+            var payload = board.Select(r =>
+            {
+                var t = totals.FirstOrDefault(x => x.UserId == r.UserId);
+                var correct = t?.Correct ?? 0;
+                var wrong = t?.Wrong ?? 0;
+
+                return new
+                {
+                    r.UserId,
+                    r.Username,
+                    r.Score,
+                    AvgResponseMs = Math.Round(r.AvgMs),
+                    TotalCorrect = correct,
+                    TotalWrong = wrong
+                };
+            });
+
+            await Clients.Group(roomCode).SendAsync("Scoreboard", payload);
+        }
+
     }
 }
+

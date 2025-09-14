@@ -18,6 +18,8 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IRoomService, RoomService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddSingleton<ConnectionRegistry>();
+builder.Services.AddScoped<IGameService, StroopService>();
+
 
 // ?? CORS — incluye devtunnels + Live Server (127.0.0.1:5500)
 builder.Services.AddCors(opt =>
