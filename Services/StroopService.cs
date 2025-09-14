@@ -38,7 +38,7 @@ namespace StroobGame.Services
             {
                 RoomId = roomId,
                 State = "playing",
-                RoundsPerPlayer = Math.Clamp(roundsPerPlayer, 5, 100),
+                RoundsPerPlayer = Math.Clamp(roundsPerPlayer, 1, 10),
                 CurrentSeat = 0,
                 CurrentPlayerUserId = players[0].UserId,
                 CurrentPlayerRoundsPlayed = 0

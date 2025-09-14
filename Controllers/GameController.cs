@@ -133,7 +133,7 @@ namespace StroobGame.Controllers
         // 🚀 Inicia partida por turnos
         // POST /api/game/{roomCode}/start?roundsPerPlayer=10
         [HttpPost("{roomCode}/start")]
-        public async Task<IActionResult> Start([FromRoute] string roomCode, [FromQuery] int roundsPerPlayer = 10)
+        public async Task<IActionResult> Start([FromRoute] string roomCode, [FromQuery] int roundsPerPlayer = 4)
         {
             var room = await _rooms.GetByCodeAsync(roomCode);
             if (room is null) return NotFound("Sala no existe");
