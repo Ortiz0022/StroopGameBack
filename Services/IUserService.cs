@@ -8,5 +8,6 @@ namespace StroobGame.Services
         Task<User?> GetByIdAsync(Guid userId);
         Task<User?> GetByUsernameAsync(string username);
         Task<User> ResolveAsync(string username); // devuelve existente o crea
+        Task<bool> IsUserBusyAsync(string username); //consulta si el usuario está actualmente jugando
     }
 }

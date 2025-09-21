@@ -71,5 +71,17 @@ namespace StroobGame.Controllers
             if (user == null) return NotFound("Usuario no encontrado");
             return Ok(new { user.Id, user.Username, user.CreatedAt });
         }
+
+        // ✅ AGREGADO: consulta ocupación de usuario por username
+        // GET /api/users/is-busy?username=kat
+        [HttpGet("is-busy")]
+        public async Task<IActionResult> IsBusy([FromQuery] string username)
+        {
+            if (string.IsNullOrWhiteSpace(username))
+                return BadRequest(new { message = "username requerido" });
+
+            var busy = await _users.IsUserBusyAsync(username);
+            return Ok(new { username, busy });
+        }
     }
 }

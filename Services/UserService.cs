@@ -59,5 +59,34 @@ namespace StroobGame.Services
 
             return u;
         }
+
+        // ✅ AGREGADO: chequea si el usuario está ocupado (jugando)
+        public async Task<bool> IsUserBusyAsync(string username)
+        {
+            var normalized = Norm(username);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            var user = await _db.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username.ToLower() == normalized.ToLower());
+
+            if (user is null) return false;
+
+            // 1) Si manejas flag IsPlaying en User, úsalo primero
+            if (user.IsPlaying) return true;
+
+            // 2) Revalida por relación con sesiones "playing"
+            //    Ajusta los nombres si tus DbSet difieren, la idea es:
+            //    GameSessions(State="playing") -> Rooms -> RoomPlayers(UserId == user.Id)
+            var isInActiveSession = await (
+                from gs in _db.GameSessions.AsNoTracking()
+                join room in _db.Rooms.AsNoTracking() on gs.RoomId equals room.Id
+                join rp in _db.RoomPlayers.AsNoTracking() on room.Id equals rp.RoomId
+                where gs.State == "playing" && rp.UserId == user.Id
+                select gs.Id
+            ).AnyAsync();
+
+            return isInActiveSession;
+        }
     }
 }

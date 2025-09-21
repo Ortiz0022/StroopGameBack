@@ -1,12 +1,27 @@
-using Microsoft.EntityFrameworkCore;
+Ôªøusing Microsoft.EntityFrameworkCore;
 using StroobGame.AppDataBase;
 using StroobGame.Hubs;
 using StroobGame.Services;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
-builder.Services.AddSignalR();
+// Controllers (camelCase opcional)
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        o.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+    });
+
+// SignalR (camelCase opcional)
+builder.Services.AddSignalR()
+    .AddJsonProtocol(o =>
+    {
+        o.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        o.PayloadSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+    });
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -20,30 +35,15 @@ builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddSingleton<ConnectionRegistry>();
 builder.Services.AddScoped<IGameService, StroopService>();
 
-
-// ?? CORS ó incluye devtunnels + Live Server (127.0.0.1:5500)
+// CORS
 builder.Services.AddCors(opt =>
 {
     opt.AddPolicy("client", p => p
-        // Agrega aquÌ otros orÌgenes si usas alguno distinto
-        .WithOrigins(
-            "http://127.0.0.1:5500",
-            "http://localhost:5500",
-            "http://localhost:5173",
-            "http://localhost:3000",
-            // si abrir·s el front tambiÈn desde https en local:
-            "https://127.0.0.1:5500",
-            // DevTunnels (tu dominio exacto, sin /):
-            "https://0687n4mj-7121.use2.devtunnels.ms"
-        )
         .AllowAnyHeader()
         .AllowAnyMethod()
         .AllowCredentials()
+        .SetIsOriginAllowed(_ => true) // ‚ö†Ô∏è SOLO para desarrollo
     );
-    // ?? Si prefieres abrir todo en DEV, usa esta polÌtica y c·mbiala abajo:
-    // opt.AddPolicy("client", p => p
-    //     .AllowAnyHeader().AllowAnyMethod().AllowCredentials()
-    //     .SetIsOriginAllowed(_ => true));
 });
 
 var app = builder.Build();
@@ -54,18 +54,20 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// ‚ö†Ô∏è Si tu front consume por HTTP (http://localhost:5266), deja ESTO COMENTADO.
+// app.UseHttpsRedirection();
 
-// ?? Orden importante
 app.UseRouting();
 
-// ? Aplica CORS ANTES de mapear endpoints
+// Auth (si usas): app.UseAuthentication(); app.UseAuthorization();
+
 app.UseCors("client");
 
-// (si usas auth, irÌa aquÌ UseAuthentication/UseAuthorization)
-
-// ? Requiere CORS explÌcitamente en Controllers y Hub
-app.MapControllers().RequireCors("client");
-app.MapHub<GameHub>("/hubs/game").RequireCors("client");
+// ‚úÖ Usa UseEndpoints para mapear el hub y los controllers (no dupliques con MapHub/MapControllers abajo)
+app.UseEndpoints(endpoints =>
+{
+    endpoints.MapHub<GameHub>("/hubs/game");
+    endpoints.MapControllers();
+});
 
 app.Run();
