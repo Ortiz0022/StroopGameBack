@@ -73,33 +73,53 @@ namespace StroobGame.Services
             if (gs.CurrentPlayerRoundsPlayed >= gs.RoundsPerPlayer)
                 throw new InvalidOperationException("El turno actual ya terminó, debe cambiar de jugador.");
 
-            // palabra = color random (texto), tinta = otro color random (puede coincidir)
-            var wordColor = COLORS[_rng.Next(COLORS.Length)];
-            var inkColor = COLORS[_rng.Next(COLORS.Length)]; // regla: responde la TINTA
+            // palabra = color random (TEXTO), tinta = otro color random (puede coincidir)
+            // REGLA: el jugador debe elegir el color que DICE la palabra (no la tinta).
+            var wordColor = COLORS[_rng.Next(COLORS.Length)];  // ← correcta (semántico)
+            var inkColor = COLORS[_rng.Next(COLORS.Length)];  // solo para pintar el texto
 
-            // opciones: 1 correcta + 2 distractores
-            var correct = inkColor;
-            var distractors = COLORS.Where(c => c.Id != correct.Id).OrderBy(_ => _rng.Next()).Take(2).ToList();
-            var pool = new List<(int Id, string Name, string Hex)> { correct };
-            pool.AddRange(distractors);
+            // Construimos exactamente 2 opciones:
+            //  - Correcta: color de la palabra (wordColor)
+            //  - Distractor: preferimos la tinta; si coincide con la correcta, elegimos otro distinto al azar
+            var correct = wordColor;
 
+            (int Id, string Name, string Hex) distractor;
+            if (inkColor.Id != correct.Id)
+            {
+                distractor = inkColor; // usar tinta como distractor
+            }
+            else
+            {
+                distractor = COLORS.Where(c => c.Id != correct.Id)
+                                   .OrderBy(_ => _rng.Next())
+                                   .First();
+            }
+
+            // Creamos el round
             var round = new Round
             {
                 GameSessionId = gs.Id,
-                Word = wordColor.Name,
-                InkHex = inkColor.Hex,
+                Word = wordColor.Name,  // lo que DICE la palabra
+                InkHex = inkColor.Hex,  // con qué color se pinta
             };
             _db.Rounds.Add(round);
             await _db.SaveChangesAsync(); // obtiene Id
 
-            int ord = 1;
-            foreach (var c in pool.OrderBy(_ => _rng.Next()))
+            // Insertamos EXACTAMENTE 2 opciones, barajadas
+            var pair = new List<(int Id, string Name, string Hex, bool IsCorrect)>
+    {
+        (correct.Id,    correct.Name,    correct.Hex,    true),
+        (distractor.Id, distractor.Name, distractor.Hex, false)
+    }.OrderBy(_ => _rng.Next()).ToList();
+
+            for (int i = 0; i < pair.Count; i++)
             {
+                var c = pair[i];
                 _db.RoundOptions.Add(new RoundOption
                 {
                     RoundId = round.Id,
-                    IsCorrect = (c.Id == correct.Id),
-                    Order = ord++,
+                    IsCorrect = c.IsCorrect,   // ← ahora es correcta la del color de la palabra
+                    Order = i + 1,
                     ColorId = c.Id
                 });
             }
