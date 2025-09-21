@@ -9,9 +9,11 @@ namespace StroobGame.Services
         private readonly AppDbContext _db;
         public UserService(AppDbContext db) => _db = db;
 
+        private static string Norm(string? s) => (s ?? "").Trim();
+
         public async Task<User> RegisterAsync(string username)
         {
-            var normalized = (username ?? "").Trim();
+            var normalized = Norm(username);
             if (string.IsNullOrWhiteSpace(normalized))
                 throw new ArgumentException("Username requerido");
 
@@ -24,7 +26,6 @@ namespace StroobGame.Services
             _db.Users.Add(u);
             await _db.SaveChangesAsync();
 
-            // 👉 Crear estadísticas iniciales para el usuario
             _db.UserStats.Add(new UserStats { UserId = u.Id });
             await _db.SaveChangesAsync();
 
@@ -32,18 +33,17 @@ namespace StroobGame.Services
         }
 
         public Task<User?> GetByIdAsync(Guid userId) =>
-                    _db.Users.FirstOrDefaultAsync(u => u.Id == userId)!;
+            _db.Users.FirstOrDefaultAsync(u => u.Id == userId)!;
 
         public Task<User?> GetByUsernameAsync(string username)
         {
-            var normalized = (username ?? "").Trim();
+            var normalized = Norm(username);
             return _db.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == normalized.ToLower());
         }
 
-        // NUEVO: idempotente (si existe lo devuelve, si no lo crea)
         public async Task<User> ResolveAsync(string username)
         {
-            var normalized = (username ?? "").Trim();
+            var normalized = Norm(username);
             if (string.IsNullOrWhiteSpace(normalized))
                 throw new ArgumentException("Username requerido");
 
@@ -54,7 +54,6 @@ namespace StroobGame.Services
             _db.Users.Add(u);
             await _db.SaveChangesAsync();
 
-            // 👉 Crear estadísticas iniciales para el usuario
             _db.UserStats.Add(new UserStats { UserId = u.Id });
             await _db.SaveChangesAsync();
 

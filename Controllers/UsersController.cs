@@ -12,7 +12,24 @@ namespace StroobGame.Controllers
 
         public record RegisterDto(string Username);
 
-        // REGISTER ESTRICTO: crea y falla si existe
+        // LOGIN: si existe entra, si no existe lo crea
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] RegisterDto dto)
+        {
+            if (dto is null || string.IsNullOrWhiteSpace(dto.Username))
+                return BadRequest(new { message = "Username requerido" });
+
+            var before = await _users.GetByUsernameAsync(dto.Username);
+            var u = await _users.ResolveAsync(dto.Username);
+
+            return Ok(new
+            {
+                status = before == null ? "created" : "existing",
+                user = new { u.Id, u.Username, u.CreatedAt }
+            });
+        }
+
+        // REGISTER ESTRICTO: crea y falla si existe (déjalo si lo quieres mantener)
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
         {
@@ -23,11 +40,11 @@ namespace StroobGame.Controllers
             }
             catch (InvalidOperationException ex)
             {
-                return Conflict(new { message = ex.Message }); // 409
+                return Conflict(new { message = ex.Message });
             }
         }
 
-        // LOOKUP: devuelve usuario existente por username (404 si no existe)
+        // LOOKUP por username
         [HttpGet("by-username/{username}")]
         public async Task<IActionResult> GetByUsername([FromRoute] string username)
         {
@@ -36,14 +53,7 @@ namespace StroobGame.Controllers
             return Ok(new { u.Id, u.Username, u.CreatedAt });
         }
 
-        // OPCIONAL (si quieres simplicidad en pruebas): upsert idempotente
-        [HttpPost("resolve")]
-        public async Task<IActionResult> Resolve([FromBody] RegisterDto dto)
-        {
-            var u = await _users.ResolveAsync(dto.Username);
-            return Ok(new { u.Id, u.Username, u.CreatedAt });
-        }
-
+        // GET por Id
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById([FromRoute] Guid id)
         {
