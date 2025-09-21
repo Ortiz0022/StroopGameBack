@@ -64,6 +64,41 @@ namespace StroobGame.Controllers
             await _hub.Clients.Group(roomCode).SendAsync("Scoreboard", payload);
         }
 
+        [HttpGet("ranking/top")]
+        public async Task<IActionResult> GetTop([FromQuery] int take = 10)
+        {
+            take = Math.Clamp(take, 1, 100);
+
+            var rows = await _db.UserStats
+                .Join(_db.Users, s => s.UserId, u => u.Id, (s, u) => new
+                {
+                    u.Id,
+                    u.Username,
+                    s.Wins,
+                    s.GamesPlayed,
+                    s.BestScore,
+                    s.TotalResponseMs,
+                    s.TotalResponses
+                })
+                .OrderByDescending(x => x.Wins)
+                .ThenByDescending(x => x.BestScore)
+                .Take(take)
+                .AsNoTracking()
+                .ToListAsync();
+
+            var result = rows.Select(x => new
+            {
+                x.Id,
+                x.Username,
+                x.Wins,
+                x.GamesPlayed,
+                x.BestScore,
+                AvgMs = x.TotalResponses > 0 ? (double)x.TotalResponseMs / x.TotalResponses : 0.0
+            });
+
+            return Ok(result);
+        }
+
 
         [HttpGet("{roomCode}/scoreboard")]
         public async Task<IActionResult> GetScoreboard([FromRoute] string roomCode)
@@ -131,12 +166,16 @@ namespace StroobGame.Controllers
         }
 
         // 🚀 Inicia partida por turnos
-        // POST /api/game/{roomCode}/start?roundsPerPlayer=10
+        // POST /api/game/{roomCode}/start?roundsPerPlayer=4&userId=GUID
         [HttpPost("{roomCode}/start")]
-        public async Task<IActionResult> Start([FromRoute] string roomCode, [FromQuery] int roundsPerPlayer = 4)
+        public async Task<IActionResult> Start([FromRoute] string roomCode, [FromQuery] int roundsPerPlayer = 4, [FromQuery] Guid userId = default)
         {
             var room = await _rooms.GetByCodeAsync(roomCode);
             if (room is null) return NotFound("Sala no existe");
+            if (userId == Guid.Empty) return BadRequest("userId requerido");
+
+            if (room.CreatorUserId != userId)
+                return Forbid("Solo el creador de la sala puede iniciar el juego.");
 
             var players = await _rooms.GetPlayersAsync(room.Id);
             if (players.Count < room.MinPlayers || players.Count > room.MaxPlayers)

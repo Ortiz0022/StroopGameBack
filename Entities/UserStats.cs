@@ -8,6 +8,8 @@ namespace StroobGame.Entities
         public int Id { get; set; }              // Identity en InMemory
         public Guid UserId { get; set; }         // FK lógica a User
 
+        public int Wins { get; set; } = 0;
+
         public int TotalScore { get; set; } = 0; // Suma de todos los puntos históricos
         public int GamesPlayed { get; set; } = 0;
         public int BestScore { get; set; } = 0;

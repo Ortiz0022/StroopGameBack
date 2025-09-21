@@ -14,10 +14,11 @@ namespace StroobGame.Services
 
         public async Task<Room> CreateRoomAsync(Guid creatorUserId)
         {
-            // El creador debe existir (está logeado)
+            // El creador debe existir
             var creator = await _db.Users.FindAsync(creatorUserId)
                 ?? throw new KeyNotFoundException("Usuario creador no existe");
 
+            // Código único
             var code = NewCode();
             while (await _db.Rooms.AnyAsync(r => r.Code == code))
                 code = NewCode();
@@ -25,15 +26,29 @@ namespace StroobGame.Services
             var room = new Room
             {
                 Code = code,
-                CreatorUserId = creatorUserId,
-                MinPlayers = 2,  // 2–4 como pediste
-                MaxPlayers = 4
+                CreatorUserId = creatorUserId,  // ← owner
+                MinPlayers = 2,
+                MaxPlayers = 4,
+                Started = false
             };
 
             _db.Rooms.Add(room);
             await _db.SaveChangesAsync();
+
+            // ✅ OPCIONAL (recomendado): auto-unir al owner como primer jugador (seat 0)
+            _db.RoomPlayers.Add(new RoomPlayer
+            {
+                RoomId = room.Id,
+                UserId = creator.Id,
+                Username = creator.Username,
+                IsOwner = true,
+                SeatOrder = 0
+            });
+            await _db.SaveChangesAsync();
+
             return room;
         }
+
 
         public Task<Room?> GetByCodeAsync(string code) =>
             _db.Rooms.Include(r => r.Players).FirstOrDefaultAsync(r => r.Code == code);
@@ -56,15 +71,15 @@ namespace StroobGame.Services
             var already = await _db.RoomPlayers
                 .FirstOrDefaultAsync(p => p.RoomId == room.Id && p.UserId == user.Id);
 
-            if (already != null) return room; // ya estaba dentro
+            if (already != null) return room; // idempotente
 
             _db.RoomPlayers.Add(new RoomPlayer
             {
                 RoomId = room.Id,
                 UserId = user.Id,
                 Username = user.Username,
-                IsOwner = (count == 0 && user.Id == room.CreatorUserId),
-                SeatOrder = count // 0..N-1
+                IsOwner = (user.Id == room.CreatorUserId), // sólo true para el owner
+                SeatOrder = count
             });
 
             await _db.SaveChangesAsync();
@@ -93,5 +108,9 @@ namespace StroobGame.Services
             await _db.SaveChangesAsync();
             return room;
         }
+
+        public Task<bool> IsOwnerAsync(Guid roomId, Guid userId) =>
+          _db.Rooms.AnyAsync(r => r.Id == roomId && r.CreatorUserId == userId);
     }
 }
+

@@ -5,6 +5,8 @@
         public Guid Id { get; set; } = Guid.NewGuid();
         public required string Code { get; set; } // Ej: "12345"
         public Guid CreatorUserId { get; set; }
+
+        public Guid OwnerId { get; set; }   // el creador de la sala
         public int MinPlayers { get; set; } = 2; // 2–4
         public int MaxPlayers { get; set; } = 6;
         public bool Started { get; set; } = false;
