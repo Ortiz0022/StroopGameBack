@@ -13,13 +13,23 @@ namespace StroobGame.Controllers
         public record RegisterDto(string Username);
 
         // LOGIN: si existe entra, si no existe lo crea
+        // PERO: si ese username está "jugando", bloquear (423)
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] RegisterDto dto)
         {
             if (dto is null || string.IsNullOrWhiteSpace(dto.Username))
                 return BadRequest(new { message = "Username requerido" });
 
-            var before = await _users.GetByUsernameAsync(dto.Username);
+            var existing = await _users.GetByUsernameAsync(dto.Username);
+            if (existing != null && existing.IsPlaying)
+            {
+                return StatusCode(423, new
+                {
+                    message = "Este usuario está jugando en este momento. Intenta más tarde."
+                });
+            }
+
+            var before = existing;
             var u = await _users.ResolveAsync(dto.Username);
 
             return Ok(new

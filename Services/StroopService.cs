@@ -62,6 +62,19 @@ namespace StroobGame.Services
                     _db.UserStats.Add(new UserStats { UserId = p.UserId });
             }
 
+            // 🔒 MARCAR A TODOS COMO "JUGANDO"
+            {
+                var userIds = players.Select(p => p.UserId).ToList();
+                var users = await _db.Users
+                    .Where(u => userIds.Contains(u.Id))
+                    .ToListAsync();
+
+                foreach (var usr in users)
+                {
+                    usr.IsPlaying = true;
+                }
+            }
+
             await _db.SaveChangesAsync();
             return gs;
         }
@@ -107,10 +120,10 @@ namespace StroobGame.Services
 
             // Insertamos EXACTAMENTE 2 opciones, barajadas
             var pair = new List<(int Id, string Name, string Hex, bool IsCorrect)>
-    {
-        (correct.Id,    correct.Name,    correct.Hex,    true),
-        (distractor.Id, distractor.Name, distractor.Hex, false)
-    }.OrderBy(_ => _rng.Next()).ToList();
+            {
+                (correct.Id,    correct.Name,    correct.Hex,    true),
+                (distractor.Id, distractor.Name, distractor.Hex, false)
+            }.OrderBy(_ => _rng.Next()).ToList();
 
             for (int i = 0; i < pair.Count; i++)
             {
@@ -133,7 +146,7 @@ namespace StroobGame.Services
         }
 
         public async Task<(GamePlayer updated, int delta, bool finishedTurn, bool finishedGame)>
-    SubmitAnswerTurnAsync(Guid roomId, Guid userId, int roundId, int optionId, double responseTimeSec)
+            SubmitAnswerTurnAsync(Guid roomId, Guid userId, int roundId, int optionId, double responseTimeSec)
         {
             var gs = await _db.GameSessions.FirstAsync(g => g.RoomId == roomId && g.State == "playing");
 
@@ -224,6 +237,19 @@ namespace StroobGame.Services
                     // sumar victoria histórica
                     var winStats = await _db.UserStats.FirstAsync(u => u.UserId == winnerRow.UserId);
                     winStats.Wins += 1;
+
+                    //marcar a todos los usuarios de la sala como NO jugando
+                    {
+                        var userIds = players.Select(p => p.UserId).ToList();
+                        var users = await _db.Users
+                            .Where(u => userIds.Contains(u.Id))
+                            .ToListAsync();
+
+                        foreach (var usr in users)
+                        {
+                            usr.IsPlaying = false;
+                        }
+                    }
                 }
             }
 

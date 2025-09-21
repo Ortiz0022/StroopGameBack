@@ -5,6 +5,8 @@
         public Guid Id { get; set; } = Guid.NewGuid();
         public required string Username { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        // Sin contraseña, por tu requerimiento
+
+        //bloquea el login si está en partida
+        public bool IsPlaying { get; set; } = false;
     }
 }
