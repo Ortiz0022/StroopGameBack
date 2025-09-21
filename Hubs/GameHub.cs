@@ -154,6 +154,16 @@ namespace StroobGame.Hubs
         public async Task StartGame(string roomCode, int roundsPerPlayer)
         {
             var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
+
+            // Identificar quién está llamando (del registry)
+            if (!_connections.TryGet(Context.ConnectionId!, out var info))
+                throw new HubException("Usuario no identificado.");
+
+            // Validar que sea el owner
+            if (room.CreatorUserId != info.UserId)
+                throw new HubException("Solo el creador de la sala puede iniciar el juego.");
+
+            // Validar reglas de inicio
             var players = await _rooms.GetPlayersAsync(room.Id);
             if (players.Count < room.MinPlayers || players.Count > room.MaxPlayers)
                 throw new HubException($"El juego requiere entre {room.MinPlayers} y {room.MaxPlayers} jugadores.");
@@ -170,10 +180,7 @@ namespace StroobGame.Hubs
                 RoundsPerPlayer = gs.RoundsPerPlayer
             });
 
-            // Scoreboard inicial
             await BroadcastScoreboard(roomCode);
-
-            // Anuncia de quién es el turno
             await BroadcastTurnChanged(roomCode);
 
             // Primer round del jugador actual
@@ -199,10 +206,11 @@ namespace StroobGame.Hubs
         {
             var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
 
+            // Procesa la respuesta en el servicio (puntos + tiempos + avance de turno/juego)
             var (gp, delta, finishedTurn, finishedGame) =
                 await _game.SubmitAnswerTurnAsync(room.Id, userId, roundId, optionId, responseTimeSec);
 
-            // update individual + scoreboard en vivo
+            // Notifica score individual del jugador que respondió
             await Clients.Group(roomCode).SendAsync("ScoreUpdated", new
             {
                 UserId = userId,
@@ -211,10 +219,13 @@ namespace StroobGame.Hubs
                 IsCorrect = delta > 0
             });
 
+            // Scoreboard en vivo (con contadores correct/wrong)
             await BroadcastScoreboard(roomCode);
 
+            // ¿Se terminó la partida?
             if (finishedGame)
             {
+                // Anuncia ganador
                 var winner = await _game.GetWinnerAsync(room.Id);
                 if (winner is not null)
                 {
@@ -227,6 +238,7 @@ namespace StroobGame.Hubs
                     });
                 }
 
+                // Tabla final de la sala
                 var board = await _game.GetScoreboardAsync(room.Id);
                 await Clients.Group(roomCode).SendAsync("GameFinished",
                     board.Select(r => new
@@ -236,50 +248,59 @@ namespace StroobGame.Hubs
                         r.Score,
                         AvgResponseMs = Math.Round(r.AvgMs)
                     }));
+
+                // 🔔 Ranking global actualizado (Wins, etc.)
+                var topRows = await _db.UserStats
+                    .Join(_db.Users, s => s.UserId, u => u.Id, (s, u) => new
+                    {
+                        u.Username,
+                        s.Wins,
+                        s.GamesPlayed,
+                        s.BestScore,
+                        s.TotalResponseMs,
+                        s.TotalResponses
+                    })
+                    .OrderByDescending(x => x.Wins)
+                    .ThenByDescending(x => x.BestScore)
+                    .Take(10)
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                var top = topRows.Select(x => new
+                {
+                    x.Username,
+                    x.Wins,
+                    x.GamesPlayed,
+                    x.BestScore,
+                    AvgMs = x.TotalResponses > 0 ? (double)x.TotalResponseMs / x.TotalResponses : 0.0
+                });
+
+                await Clients.All.SendAsync("RankingUpdated", top);
                 return;
             }
 
+            // Si terminó el turno, anuncia de quién es el siguiente
             if (finishedTurn)
             {
-                // Cambió de jugador
                 await BroadcastTurnChanged(roomCode);
+            }
 
-                // Crea primer round del nuevo jugador
-                var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
-                await Clients.Group(roomCode).SendAsync("NewRound", new
-                {
-                    RoundId = created.round.Id,
-                    created.round.Word,
-                    created.round.InkHex,
-                    Options = created.round.Options.OrderBy(o => o.Order).Select(o => new
-                    {
-                        o.Id,
-                        o.IsCorrect,
-                        o.Order,
-                        o.ColorId
-                    }),
-                    RemainingForThisPlayer = created.remainingForThisPlayer
-                });
-            }
-            else
+            // Genera y envía el siguiente round (nuevo jugador o mismo)
+            var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
+            await Clients.Group(roomCode).SendAsync("NewRound", new
             {
-                // Sigue el mismo jugador: crea siguiente round
-                var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
-                await Clients.Group(roomCode).SendAsync("NewRound", new
+                RoundId = created.round.Id,
+                created.round.Word,
+                created.round.InkHex,
+                Options = created.round.Options.OrderBy(o => o.Order).Select(o => new
                 {
-                    RoundId = created.round.Id,
-                    created.round.Word,
-                    created.round.InkHex,
-                    Options = created.round.Options.OrderBy(o => o.Order).Select(o => new
-                    {
-                        o.Id,
-                        o.IsCorrect,
-                        o.Order,
-                        o.ColorId
-                    }),
-                    RemainingForThisPlayer = created.remainingForThisPlayer
-                });
-            }
+                    o.Id,
+                    o.IsCorrect,
+                    o.Order,
+                    o.ColorId
+                }),
+                RemainingForThisPlayer = created.remainingForThisPlayer
+            });
         }
 
         // 🔁 Tu método BroadcastScoreboard ya existente (no cambia)

@@ -133,7 +133,7 @@ namespace StroobGame.Services
         }
 
         public async Task<(GamePlayer updated, int delta, bool finishedTurn, bool finishedGame)>
-            SubmitAnswerTurnAsync(Guid roomId, Guid userId, int roundId, int optionId, double responseTimeSec)
+    SubmitAnswerTurnAsync(Guid roomId, Guid userId, int roundId, int optionId, double responseTimeSec)
         {
             var gs = await _db.GameSessions.FirstAsync(g => g.RoomId == roomId && g.State == "playing");
 
@@ -145,7 +145,7 @@ namespace StroobGame.Services
             var opt = await _db.RoundOptions.FirstAsync(o => o.RoundId == roundId && o.Id == optionId);
             var isCorrect = opt.IsCorrect;
 
-            // Registrar answer
+            // Registrar answer (guardamos tiempo por respuesta)
             var ans = new Answer
             {
                 GameSessionId = gs.Id,
@@ -157,14 +157,14 @@ namespace StroobGame.Services
             };
             _db.Answers.Add(ans);
 
-            // Actualizar score/tiempo por juego
+            // Actualizar score/tiempo por JUEGO (solo +1 por acierto; errores no restan)
             var gp = await _db.GamePlayers.FirstAsync(x => x.GameSessionId == gs.Id && x.UserId == userId);
-            var delta = ScoreDelta(isCorrect, responseTimeSec);
+            var delta = isCorrect ? 1 : 0;                       // ← nueva regla de puntaje
             gp.Score += delta;
             gp.TotalResponses += 1;
             gp.TotalResponseMs += (long)(responseTimeSec * 1000.0);
 
-            // Estadísticas históricas
+            // Estadísticas HISTÓRICAS
             var stats = await _db.UserStats.FirstAsync(s => s.UserId == userId);
             stats.TotalScore += delta;
             stats.TotalResponses += 1;
@@ -182,7 +182,11 @@ namespace StroobGame.Services
                 finishedTurn = true;
 
                 // ¿hay otro jugador?
-                var players = await _db.RoomPlayers.Where(p => p.RoomId == roomId).OrderBy(p => p.SeatOrder).ToListAsync();
+                var players = await _db.RoomPlayers
+                    .Where(p => p.RoomId == roomId)
+                    .OrderBy(p => p.SeatOrder)
+                    .ToListAsync();
+
                 gs.CurrentSeat += 1;
 
                 if (gs.CurrentSeat < players.Count)
@@ -194,18 +198,32 @@ namespace StroobGame.Services
                 }
                 else
                 {
-                    // no hay más jugadores
+                    // no hay más jugadores → cerrar juego
                     finishedGame = true;
                     gs.State = "finished";
 
                     // cerrar GamesPlayed & BestScore
-                    var allPlayers = await _db.GamePlayers.Where(x => x.GameSessionId == gs.Id).ToListAsync();
+                    var allPlayers = await _db.GamePlayers
+                        .Where(x => x.GameSessionId == gs.Id)
+                        .ToListAsync();
+
                     foreach (var p in allPlayers)
                     {
                         var s = await _db.UserStats.FirstAsync(u => u.UserId == p.UserId);
                         s.GamesPlayed += 1;
                         if (p.Score > s.BestScore) s.BestScore = p.Score;
                     }
+
+                    // determinar GANADOR: mayor Score; empate → menor tiempo total; 3er desempate estable
+                    var winnerRow = allPlayers
+                        .OrderByDescending(p => p.Score)
+                        .ThenBy(p => p.TotalResponseMs)
+                        .ThenBy(p => p.UserId)
+                        .First();
+
+                    // sumar victoria histórica
+                    var winStats = await _db.UserStats.FirstAsync(u => u.UserId == winnerRow.UserId);
+                    winStats.Wins += 1;
                 }
             }
 
@@ -252,10 +270,7 @@ namespace StroobGame.Services
 
         private int ScoreDelta(bool isCorrect, double responseTimeSec)
         {
-            if (!isCorrect) return -1;
-            if (responseTimeSec <= 1.0) return +3;
-            if (responseTimeSec <= 2.0) return +2;
-            return +1;
+            return isCorrect ? 1 : 0;   // solo suma por acierto
         }
     }
 }
