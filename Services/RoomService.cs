@@ -65,7 +65,7 @@ namespace StroobGame.Services
                 throw new InvalidOperationException("La sala ya inició");
 
             var count = await _db.RoomPlayers.CountAsync(p => p.RoomId == room.Id);
-            if (count >= room.MaxPlayers)
+            if (count > room.MaxPlayers)
                 throw new InvalidOperationException("Sala llena");
 
             var already = await _db.RoomPlayers

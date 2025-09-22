@@ -8,7 +8,7 @@
 
         public Guid OwnerId { get; set; }   // el creador de la sala
         public int MinPlayers { get; set; } = 2; // 2–4
-        public int MaxPlayers { get; set; } = 6;
+        public int MaxPlayers { get; set; } = 4;
         public bool Started { get; set; } = false;
         public List<RoomPlayer> Players { get; set; } = new();
         public Guid? ActiveGameSessionId { get; set; }
