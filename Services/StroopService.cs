@@ -23,8 +23,14 @@ namespace StroobGame.Services
 
         public async Task<GameSession> StartAsync(Guid roomId, int roundsPerPlayer)
         {
+            // ANTES: devolvías la sesión playing existente → causa juegos “pegados”.
+            // Ahora: si hay una playing, la damos por finalizada y limpiamos residuos mínimos.
             var existing = await _db.GameSessions.FirstOrDefaultAsync(g => g.RoomId == roomId && g.State == "playing");
-            if (existing != null) return existing;
+            if (existing != null)
+            {
+                existing.State = "finished";
+                await _db.SaveChangesAsync();
+            }
 
             var players = await _db.RoomPlayers
                 .Where(p => p.RoomId == roomId)
@@ -41,11 +47,11 @@ namespace StroobGame.Services
                 RoundsPerPlayer = Math.Clamp(roundsPerPlayer, 1, 10),
                 CurrentSeat = 0,
                 CurrentPlayerUserId = players[0].UserId,
-                CurrentPlayerRoundsPlayed = 0
+                CurrentPlayerRoundsPlayed = 0,
+                CurrentRoundId = null
             };
             _db.GameSessions.Add(gs);
 
-            // Inicializar GamePlayers con los jugadores de la sala
             foreach (var p in players)
             {
                 _db.GamePlayers.Add(new GamePlayer
@@ -56,24 +62,20 @@ namespace StroobGame.Services
                     Score = 0
                 });
 
-                // Asegura stats histórico
                 var stats = await _db.UserStats.FirstOrDefaultAsync(s => s.UserId == p.UserId);
                 if (stats == null)
                     _db.UserStats.Add(new UserStats { UserId = p.UserId });
             }
 
-            // 🔒 MARCAR A TODOS COMO "JUGANDO"
-            {
-                var userIds = players.Select(p => p.UserId).ToList();
-                var users = await _db.Users
-                    .Where(u => userIds.Contains(u.Id))
-                    .ToListAsync();
+            // Marcar usuarios como jugando
+            var userIds = players.Select(p => p.UserId).ToList();
+            var users = await _db.Users.Where(u => userIds.Contains(u.Id)).ToListAsync();
+            foreach (var usr in users) usr.IsPlaying = true;
 
-                foreach (var usr in users)
-                {
-                    usr.IsPlaying = true;
-                }
-            }
+            // NUEVO: marca sala como iniciada y guarda Id de sesión activa.
+            var room = await _db.Rooms.FirstAsync(r => r.Id == roomId);
+            room.Started = true;
+            room.ActiveGameSessionId = gs.Id;
 
             await _db.SaveChangesAsync();
             return gs;
@@ -146,20 +148,17 @@ namespace StroobGame.Services
         }
 
         public async Task<(GamePlayer updated, int delta, bool finishedTurn, bool finishedGame)>
-            SubmitAnswerTurnAsync(Guid roomId, Guid userId, int roundId, int optionId, double responseTimeSec)
+        SubmitAnswerTurnAsync(Guid roomId, Guid userId, int roundId, int optionId, double responseTimeSec)
         {
             var gs = await _db.GameSessions.FirstAsync(g => g.RoomId == roomId && g.State == "playing");
 
-            // Solo el jugador al que le toca puede responder
             if (userId != gs.CurrentPlayerUserId)
                 throw new InvalidOperationException("No es tu turno.");
 
-            // Validar opción elegida
             var opt = await _db.RoundOptions.FirstAsync(o => o.RoundId == roundId && o.Id == optionId);
             var isCorrect = opt.IsCorrect;
 
-            // Registrar answer (guardamos tiempo por respuesta)
-            var ans = new Answer
+            _db.Answers.Add(new Answer
             {
                 GameSessionId = gs.Id,
                 RoundId = roundId,
@@ -167,23 +166,19 @@ namespace StroobGame.Services
                 IsCorrect = isCorrect,
                 ResponseTimeSec = responseTimeSec,
                 OptionId = optionId
-            };
-            _db.Answers.Add(ans);
+            });
 
-            // Actualizar score/tiempo por JUEGO (solo +1 por acierto; errores no restan)
             var gp = await _db.GamePlayers.FirstAsync(x => x.GameSessionId == gs.Id && x.UserId == userId);
-            var delta = isCorrect ? 1 : 0;                       // ← nueva regla de puntaje
+            var delta = isCorrect ? 1 : 0;
             gp.Score += delta;
             gp.TotalResponses += 1;
             gp.TotalResponseMs += (long)(responseTimeSec * 1000.0);
 
-            // Estadísticas HISTÓRICAS
             var stats = await _db.UserStats.FirstAsync(s => s.UserId == userId);
             stats.TotalScore += delta;
             stats.TotalResponses += 1;
             stats.TotalResponseMs += (long)(responseTimeSec * 1000.0);
 
-            // Avance del turno
             gs.CurrentPlayerRoundsPlayed += 1;
 
             bool finishedTurn = false;
@@ -191,10 +186,8 @@ namespace StroobGame.Services
 
             if (gs.CurrentPlayerRoundsPlayed >= gs.RoundsPerPlayer)
             {
-                // terminó el turno de este jugador
                 finishedTurn = true;
 
-                // ¿hay otro jugador?
                 var players = await _db.RoomPlayers
                     .Where(p => p.RoomId == roomId)
                     .OrderBy(p => p.SeatOrder)
@@ -204,18 +197,16 @@ namespace StroobGame.Services
 
                 if (gs.CurrentSeat < players.Count)
                 {
-                    // pasa al siguiente
                     gs.CurrentPlayerUserId = players[gs.CurrentSeat].UserId;
                     gs.CurrentPlayerRoundsPlayed = 0;
-                    gs.CurrentRoundId = null; // se generará su primer round luego
+                    gs.CurrentRoundId = null;
                 }
                 else
                 {
-                    // no hay más jugadores → cerrar juego
+                    // FIN DEL JUEGO
                     finishedGame = true;
                     gs.State = "finished";
 
-                    // cerrar GamesPlayed & BestScore
                     var allPlayers = await _db.GamePlayers
                         .Where(x => x.GameSessionId == gs.Id)
                         .ToListAsync();
@@ -227,29 +218,24 @@ namespace StroobGame.Services
                         if (p.Score > s.BestScore) s.BestScore = p.Score;
                     }
 
-                    // determinar GANADOR: mayor Score; empate → menor tiempo total; 3er desempate estable
                     var winnerRow = allPlayers
                         .OrderByDescending(p => p.Score)
                         .ThenBy(p => p.TotalResponseMs)
                         .ThenBy(p => p.UserId)
                         .First();
 
-                    // sumar victoria histórica
                     var winStats = await _db.UserStats.FirstAsync(u => u.UserId == winnerRow.UserId);
                     winStats.Wins += 1;
 
-                    //marcar a todos los usuarios de la sala como NO jugando
-                    {
-                        var userIds = players.Select(p => p.UserId).ToList();
-                        var users = await _db.Users
-                            .Where(u => userIds.Contains(u.Id))
-                            .ToListAsync();
+                    // Marcar usuarios como NO jugando
+                    var uids = players.Select(p => p.UserId).ToList();
+                    var usrs = await _db.Users.Where(u => uids.Contains(u.Id)).ToListAsync();
+                    foreach (var usr in usrs) usr.IsPlaying = false;
 
-                        foreach (var usr in users)
-                        {
-                            usr.IsPlaying = false;
-                        }
-                    }
+                    // NUEVO: deja la sala lista para otra partida
+                    var room = await _db.Rooms.FirstAsync(r => r.Id == roomId);
+                    room.Started = false;
+                    room.ActiveGameSessionId = null;
                 }
             }
 

@@ -1,4 +1,6 @@
-﻿using StroobGame.Entities;
+﻿// using...
+using StroobGame.Entities;
+using System.Threading.Tasks;
 
 namespace StroobGame.Services
 {
@@ -13,5 +15,8 @@ namespace StroobGame.Services
 
         // NUEVO
         Task<bool> IsOwnerAsync(Guid roomId, Guid userId);
+
+        // NUEVO: deja la sala como recién creada (sin sesión activa ni rondas colgando)
+        Task ResetRoomAsync(Guid roomId);
     }
 }

@@ -9,12 +9,15 @@ namespace StroobGame.Controllers
     {
         private readonly IRoomService _rooms;
         private readonly IChatService _chat;
+
         public RoomsController(IRoomService rooms, IChatService chat)
         {
             _rooms = rooms;
             _chat = chat;
         }
-        // Crea sala: el body es un GUID en JSON (entre comillas)
+
+        // ========== CREATE ==========
+        // Body: GUID en JSON (entre comillas)
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] Guid creatorUserId)
         {
@@ -22,9 +25,9 @@ namespace StroobGame.Controllers
             return Ok(new { room.Id, room.Code, room.MinPlayers, room.MaxPlayers });
         }
 
+        // ========== JOIN ==========
         public record JoinDto(string RoomCode, Guid UserId);
 
-        // Unirse a sala: requiere userId de un usuario ya registrado (logeado)
         [HttpPost("join")]
         public async Task<IActionResult> Join([FromBody] JoinDto dto)
         {
@@ -45,6 +48,7 @@ namespace StroobGame.Controllers
             catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
         }
 
+        // ========== PLAYERS SNAPSHOT ==========
         [HttpGet("{roomCode}/players")]
         public async Task<IActionResult> Players([FromRoute] string roomCode)
         {
@@ -54,6 +58,7 @@ namespace StroobGame.Controllers
             return Ok(players.Select(p => new { p.UserId, p.Username, p.SeatOrder, p.IsOwner }));
         }
 
+        // ========== MARK STARTED (opcional si lo usas) ==========
         [HttpPost("{roomCode}/start")]
         public async Task<IActionResult> Start([FromRoute] string roomCode)
         {
@@ -64,6 +69,7 @@ namespace StroobGame.Controllers
             return Ok(new { started = true });
         }
 
+        // ========== CHAT HISTORY ==========
         [HttpGet("{roomCode}/messages")]
         public async Task<IActionResult> GetMessages([FromRoute] string roomCode, [FromQuery] int take = 50)
         {
@@ -72,6 +78,17 @@ namespace StroobGame.Controllers
 
             var msgs = await _chat.GetLastAsync(room.Id, Math.Clamp(take, 1, 200));
             return Ok(msgs.Select(m => new { m.UserId, m.Username, m.Text, sentAt = m.SentAtUtc }));
+        }
+
+        // ========== NEW: VOLVER A LA SALA / RESET ==========
+        [HttpPost("{roomCode}/return")]
+        public async Task<IActionResult> ReturnToLobby([FromRoute] string roomCode)
+        {
+            var room = await _rooms.GetByCodeAsync(roomCode);
+            if (room is null) return NotFound("Sala no existe");
+
+            await _rooms.ResetRoomAsync(room.Id);
+            return Ok(new { ok = true });
         }
     }
 }

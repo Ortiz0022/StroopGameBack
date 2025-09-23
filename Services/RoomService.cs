@@ -14,11 +14,9 @@ namespace StroobGame.Services
 
         public async Task<Room> CreateRoomAsync(Guid creatorUserId)
         {
-            // El creador debe existir
             var creator = await _db.Users.FindAsync(creatorUserId)
                 ?? throw new KeyNotFoundException("Usuario creador no existe");
 
-            // Código único
             var code = NewCode();
             while (await _db.Rooms.AnyAsync(r => r.Code == code))
                 code = NewCode();
@@ -26,7 +24,7 @@ namespace StroobGame.Services
             var room = new Room
             {
                 Code = code,
-                CreatorUserId = creatorUserId,  // ← owner
+                CreatorUserId = creatorUserId,
                 MinPlayers = 2,
                 MaxPlayers = 4,
                 Started = false
@@ -35,7 +33,6 @@ namespace StroobGame.Services
             _db.Rooms.Add(room);
             await _db.SaveChangesAsync();
 
-            // ✅ OPCIONAL (recomendado): auto-unir al owner como primer jugador (seat 0)
             _db.RoomPlayers.Add(new RoomPlayer
             {
                 RoomId = room.Id,
@@ -48,7 +45,6 @@ namespace StroobGame.Services
 
             return room;
         }
-
 
         public Task<Room?> GetByCodeAsync(string code) =>
             _db.Rooms.Include(r => r.Players).FirstOrDefaultAsync(r => r.Code == code);
@@ -65,7 +61,8 @@ namespace StroobGame.Services
                 throw new InvalidOperationException("La sala ya inició");
 
             var count = await _db.RoomPlayers.CountAsync(p => p.RoomId == room.Id);
-            if (count > room.MaxPlayers)
+            // FIX: debe ser >= para bloquear al 5to (si Max=4)
+            if (count >= room.MaxPlayers)
                 throw new InvalidOperationException("Sala llena");
 
             var already = await _db.RoomPlayers
@@ -78,7 +75,7 @@ namespace StroobGame.Services
                 RoomId = room.Id,
                 UserId = user.Id,
                 Username = user.Username,
-                IsOwner = (user.Id == room.CreatorUserId), // sólo true para el owner
+                IsOwner = (user.Id == room.CreatorUserId),
                 SeatOrder = count
             });
 
@@ -110,7 +107,50 @@ namespace StroobGame.Services
         }
 
         public Task<bool> IsOwnerAsync(Guid roomId, Guid userId) =>
-          _db.Rooms.AnyAsync(r => r.Id == roomId && r.CreatorUserId == userId);
+            _db.Rooms.AnyAsync(r => r.Id == roomId && r.CreatorUserId == userId);
+
+        // ⬇⬇⬇ NUEVO: reset fuerte de sala y sesión
+        public async Task ResetRoomAsync(Guid roomId)
+        {
+            // ⚠️ InMemory no soporta transacciones. Hacemos reset “best-effort” sin BeginTransaction.
+            var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Id == roomId);
+            if (room == null) return;
+
+            // Todas las sesiones de esa sala (puede haber históricas)
+            var sessions = await _db.GameSessions
+                .Where(s => s.RoomId == roomId)
+                .ToListAsync();
+
+            if (sessions.Count > 0)
+            {
+                var sids = sessions.Select(s => s.Id).ToList();
+
+                // 1) Answers
+                var answers = _db.Answers.Where(a => sids.Contains(a.GameSessionId));
+                _db.Answers.RemoveRange(answers);
+
+                // 2) RoundOptions y Rounds
+                var rounds = await _db.Rounds.Where(r => sids.Contains(r.GameSessionId)).ToListAsync();
+                var rIds = rounds.Select(r => r.Id).ToList();
+
+                var ropts = _db.RoundOptions.Where(o => rIds.Contains(o.RoundId));
+                _db.RoundOptions.RemoveRange(ropts);
+                _db.Rounds.RemoveRange(rounds);
+
+                // 3) GamePlayers
+                var gplayers = _db.GamePlayers.Where(gp => sids.Contains(gp.GameSessionId));
+                _db.GamePlayers.RemoveRange(gplayers);
+
+                // 4) GameSessions (márcalas y bórralas)
+                foreach (var s in sessions) s.State = "finished";
+                _db.GameSessions.RemoveRange(sessions);
+            }
+
+            // 5) Limpia estado de la sala
+            room.Started = false;
+            room.ActiveGameSessionId = null;
+
+            await _db.SaveChangesAsync();
+        }
     }
 }
-
