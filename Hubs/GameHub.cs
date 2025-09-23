@@ -151,6 +151,7 @@ namespace StroobGame.Hubs
         }
 
         // 🚀 StartGame por turnos
+        // 🚀 StartGame por turnos
         public async Task StartGame(string roomCode, int roundsPerPlayer)
         {
             var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new HubException("Sala no existe");
@@ -170,6 +171,7 @@ namespace StroobGame.Hubs
 
             await _rooms.MarkStartedAsync(room.Id);
 
+            // 👉 gs es la GameSession activa; úsala luego para CurrentPlayerUserId
             var gs = await _game.StartAsync(room.Id, roundsPerPlayer);
 
             // Notificar inicio
@@ -185,6 +187,7 @@ namespace StroobGame.Hubs
 
             // Primer round del jugador actual
             var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
+
             await Clients.Group(roomCode).SendAsync("NewRound", new
             {
                 RoundId = created.round.Id,
@@ -197,7 +200,8 @@ namespace StroobGame.Hubs
                     o.Order,
                     o.ColorId
                 }),
-                RemainingForThisPlayer = created.remainingForThisPlayer
+                RemainingForThisPlayer = created.remainingForThisPlayer,
+                CurrentPlayerUserId = gs.CurrentPlayerUserId  // 👈 sin redeclarar 'gs'
             });
         }
 
@@ -287,6 +291,10 @@ namespace StroobGame.Hubs
 
             // Genera y envía el siguiente round (nuevo jugador o mismo)
             var created = await _game.CreateOrNextRoundForCurrentAsync(room.Id);
+
+            // lee game session para obtener CurrentPlayerUserId actualizado
+            var gs = await _db.GameSessions.FirstAsync(g => g.RoomId == room.Id);
+
             await Clients.Group(roomCode).SendAsync("NewRound", new
             {
                 RoundId = created.round.Id,
@@ -299,7 +307,8 @@ namespace StroobGame.Hubs
                     o.Order,
                     o.ColorId
                 }),
-                RemainingForThisPlayer = created.remainingForThisPlayer
+                RemainingForThisPlayer = created.remainingForThisPlayer,
+                CurrentPlayerUserId = gs.CurrentPlayerUserId  // 👈 NUEVO
             });
         }
 

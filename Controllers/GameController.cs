@@ -149,6 +149,9 @@ namespace StroobGame.Controllers
 
         private async Task BroadcastNewRoundAsync(string roomCode, Round round, int remainingForThisPlayer)
         {
+            var room = await _rooms.GetByCodeAsync(roomCode) ?? throw new InvalidOperationException("Sala no existe");
+            var gs = await _db.GameSessions.FirstAsync(g => g.RoomId == room.Id);
+
             await _hub.Clients.Group(roomCode).SendAsync("NewRound", new
             {
                 RoundId = round.Id,
@@ -161,9 +164,11 @@ namespace StroobGame.Controllers
                     o.Order,
                     o.ColorId
                 }),
-                RemainingForThisPlayer = Math.Max(0, remainingForThisPlayer)
+                RemainingForThisPlayer = Math.Max(0, remainingForThisPlayer),
+                CurrentPlayerUserId = gs.CurrentPlayerUserId  // 👈 NUEVO
             });
         }
+
 
         // 🚀 Inicia partida por turnos
         // POST /api/game/{roomCode}/start?roundsPerPlayer=4&userId=GUID
@@ -231,8 +236,10 @@ namespace StroobGame.Controllers
                     o.Order,
                     o.ColorId
                 }),
-                RemainingForThisPlayer = remaining
+                RemainingForThisPlayer = remaining,
+                CurrentPlayerUserId = gs.CurrentPlayerUserId   // 👈 AÑADIDO
             });
+
         }
 
         public record SubmitDto(Guid UserId, int RoundId, int OptionId, double ResponseTimeSec);
